@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: akm-postgres
+    environment:
+      POSTGRES_USER: akm
+      POSTGRES_PASSWORD: akm_pass
+      POSTGRES_DB: akm
+    ports:
+      - "5433:5432"
+    volumes:
+      - akm_pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: akm-redis
+    ports:
+      - "6380:6379"
+
+volumes:
+  akm_pgdata:
