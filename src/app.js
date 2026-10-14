@@ -1,16 +1,18 @@
 require('dotenv').config();
 const express = require('express');
+const cookieParser = require('cookie-parser');
+
 const { createKey, listKeys, revokeKey } = require('./keys');
 const { authenticate } = require('./auth');
-const { requireScope } = require('./scopes');
 const { rateLimit } = require('./rateLimit');
+const { requireScope } = require('./scopes');
+const { quotaAlert } = require('./quota');
 const { requestLogger } = require('./logger');
 const { getRecentLogs, getUsage } = require('./usage');
-const { quotaAlert } = require('./quota');
-
-const app = express();
-app.use(express.json());
-app.use(requestLogger);
+const accountRoutes = require('./accountRoutes');
+const keyRoutes = require('./keyRoutes');
+const v1Routes = require('./v1Routes');
+const usageRoutes = require('./usageRoutes');
 
 function isHttpUrl(value) {
   try {
@@ -21,6 +23,11 @@ function isHttpUrl(value) {
   }
 }
 
+const app = express();
+app.use(express.json());
+app.use(cookieParser());
+app.use(requestLogger);
+
 function requireAdmin(req, res, next) {
   const header = req.headers.authorization || '';
   if (header !== `Bearer ${process.env.ADMIN_TOKEN}`) {
@@ -28,6 +35,8 @@ function requireAdmin(req, res, next) {
   }
   next();
 }
+
+// ---------- internal admin endpoints (shared admin token) ----------
 
 app.post('/admin/keys', requireAdmin, async (req, res) => {
   const { name, scopes, rateLimitPerMin, expiresAt, monthlyQuota, webhookUrl } = req.body;
@@ -77,14 +86,6 @@ app.delete('/admin/keys/:id', requireAdmin, async (req, res) => {
   res.json({ revoked: true });
 });
 
-app.get('/read/hello', authenticate, rateLimit, requireScope, quotaAlert, (req, res) => {
-  res.json({ message: 'hello from read', keyName: req.apiKey.name });
-});
-
-app.post('/write/hello', authenticate, rateLimit, requireScope, quotaAlert, (req, res) => {
-  res.json({ message: 'hello from write', keyName: req.apiKey.name });
-});
-
 app.get('/admin/keys/:id/logs', requireAdmin, async (req, res) => {
   if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) {
     return res.status(400).json({ error: 'invalid_id' });
@@ -112,6 +113,39 @@ app.get('/admin/keys/:id/usage', requireAdmin, async (req, res) => {
   }
 
   res.json(await getUsage(req.params.id, from, to));
+});
+
+// ---------- legacy demo routes (used by scripts/e2e.js) ----------
+
+app.get('/read/hello', authenticate, rateLimit, requireScope, quotaAlert, (req, res) => {
+  res.json({ message: 'hello from read', keyName: req.apiKey.name });
+});
+
+app.post('/write/hello', authenticate, rateLimit, requireScope, quotaAlert, (req, res) => {
+  res.json({ message: 'hello from write', keyName: req.apiKey.name });
+});
+
+// ---------- dashboard API (login sessions) ----------
+app.use('/api', usageRoutes);
+app.use('/api', accountRoutes);
+app.use('/api/keys', keyRoutes);
+
+// ---------- the public service (API keys) ----------
+
+app.use('/v1', v1Routes);
+
+// ---------- fallbacks (must stay last) ----------
+
+app.use((req, res) => {
+  res.status(404).json({ error: 'not_found' });
+});
+
+app.use((err, req, res, next) => {
+  if (err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: 'bad_request' });
+  }
+  console.error('unhandled error:', err);
+  res.status(500).json({ error: 'internal_error' });
 });
 
 module.exports = app;

@@ -9,20 +9,22 @@ function requestLogger(req, res, next) {
     const latencyMs = Number(process.hrtime.bigint() - start) / 1e6;
     const endpoint = req.originalUrl.split('?')[0].slice(0, 200);
     const isError = res.statusCode >= 400 ? 1 : 0;
+    const tokens = Number(res.locals.tokens) || 0;
 
     pool
       .query(
         `WITH log AS (
-           INSERT INTO request_logs (key_id, method, endpoint, status_code, latency_ms)
-           VALUES ($1, $2, $3, $4, $5)
+           INSERT INTO request_logs (key_id, method, endpoint, status_code, latency_ms, tokens)
+           VALUES ($1, $2, $3, $4, $5, $7)
          )
-         INSERT INTO usage_daily (key_id, day, requests, errors, total_latency_ms)
-         VALUES ($1, (now() AT TIME ZONE 'UTC')::date, 1, $6, $5)
+         INSERT INTO usage_daily (key_id, day, requests, errors, total_latency_ms, tokens)
+         VALUES ($1, (now() AT TIME ZONE 'UTC')::date, 1, $6, $5, $7)
          ON CONFLICT (key_id, day) DO UPDATE SET
            requests = usage_daily.requests + 1,
            errors = usage_daily.errors + EXCLUDED.errors,
-           total_latency_ms = usage_daily.total_latency_ms + EXCLUDED.total_latency_ms`,
-        [req.keyId, req.method, endpoint, res.statusCode, latencyMs, isError]
+           total_latency_ms = usage_daily.total_latency_ms + EXCLUDED.total_latency_ms,
+           tokens = usage_daily.tokens + EXCLUDED.tokens`,
+        [req.keyId, req.method, endpoint, res.statusCode, latencyMs, isError, tokens]
       )
       .catch((err) => console.error('log insert failed:', err.message));
   });

@@ -34,3 +34,18 @@ CREATE TABLE IF NOT EXISTS usage_daily (
 
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS monthly_quota INTEGER;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS webhook_url TEXT;
+
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'pro')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys (user_id, created_at DESC);
+
+
+ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_daily ADD COLUMN IF NOT EXISTS tokens BIGINT NOT NULL DEFAULT 0;

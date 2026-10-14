@@ -10,20 +10,53 @@ function hashKey(rawKey) {
   return crypto.createHash('sha256').update(rawKey).digest('hex');
 }
 
-async function createKey({ name, scopes, rateLimitPerMin, expiresAt, monthlyQuota, webhookUrl }) {
+async function createKey({
+  name,
+  scopes,
+  rateLimitPerMin,
+  expiresAt,
+  monthlyQuota,
+  webhookUrl,
+  userId,
+}) {
   const rawKey = generateRawKey();
   const keyHash = hashKey(rawKey);
   const keyPrefix = rawKey.slice(0, 12);
 
   const { rows } = await pool.query(
     `INSERT INTO api_keys
-       (name, key_prefix, key_hash, scopes, rate_limit_per_min, expires_at, monthly_quota, webhook_url)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       (name, key_prefix, key_hash, scopes, rate_limit_per_min, expires_at, monthly_quota, webhook_url, user_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING id, name, key_prefix, scopes, rate_limit_per_min, created_at, expires_at, monthly_quota`,
-    [name, keyPrefix, keyHash, scopes, rateLimitPerMin, expiresAt || null, monthlyQuota || null, webhookUrl || null]
+    [
+      name,
+      keyPrefix,
+      keyHash,
+      scopes,
+      rateLimitPerMin,
+      expiresAt || null,
+      monthlyQuota || null,
+      webhookUrl || null,
+      userId || null,
+    ]
   );
 
   return { ...rows[0], key: rawKey };
+}
+
+async function revokeKey(id, userId = null) {
+  const { rows } = await pool.query(
+    `UPDATE api_keys
+     SET revoked_at = now()
+     WHERE id = $1
+       AND revoked_at IS NULL
+       AND ($2::uuid IS NULL OR user_id = $2)
+     RETURNING key_hash`,
+    [id, userId]
+  );
+  if (rows.length === 0) return false;
+  await redis.del(`key:${rows[0].key_hash}`);
+  return true;
 }
 
 async function listKeys() {
@@ -45,19 +78,6 @@ async function findKeyByHash(keyHash) {
     [keyHash]
   );
   return rows[0] || null;
-}
-
-async function revokeKey(id) {
-  const { rows } = await pool.query(
-    `UPDATE api_keys
-     SET revoked_at = now()
-     WHERE id = $1 AND revoked_at IS NULL
-     RETURNING key_hash`,
-    [id]
-  );
-  if (rows.length === 0) return false;
-  await redis.del(`key:${rows[0].key_hash}`);
-  return true;
 }
 
 module.exports = { hashKey, createKey, listKeys, findKeyByHash, revokeKey };
